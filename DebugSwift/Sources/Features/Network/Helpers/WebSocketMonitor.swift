@@ -104,7 +104,7 @@ final class WebSocketMonitor: NSObject, @unchecked Sendable {
         method_setImplementation(method, imp_implementationWithBlock(block))
     }
     
-    private func swizzleReceiveMessage(in wsClass: AnyClass) {
+    func swizzleReceiveMessage(in wsClass: AnyClass) {
         let sel = NSSelectorFromString("receiveMessageWithCompletionHandler:")
         guard let method = class_getInstanceMethod(wsClass, sel) else {
             Debug.print("⚠️ Couldn’t find receiveMessageWithCompletionHandler:")
@@ -120,8 +120,9 @@ final class WebSocketMonitor: NSObject, @unchecked Sendable {
 
         // 3) And our replacement block takes (self, handlerAsAnyObject)
         let swizzleBlock: @convention(block) (AnyObject, AnyObject) -> Void = { [weak self] obj, rawHandler in
-            // Cast the raw handler to the concrete block type:
-            let originalHandler = unsafeBitCast(rawHandler, to: HandlerBlock.self)
+            // Objective-C callers may pass a stack block. Keep the copied block object
+            // alive for as long as the asynchronous wrapper can be invoked.
+            let copiedHandler = rawHandler.copy() as AnyObject
 
             // Wrap it so we can intercept the incoming message/error
             let wrapped: HandlerBlock = { messageObj, error in
@@ -135,6 +136,7 @@ final class WebSocketMonitor: NSObject, @unchecked Sendable {
                     }
                 }
                 // Forward to the original handler
+                let originalHandler = unsafeBitCast(copiedHandler, to: HandlerBlock.self)
                 originalHandler(messageObj, error)
             }
 
@@ -264,34 +266,6 @@ final class WebSocketMonitor: NSObject, @unchecked Sendable {
         }
         
         return nil
-    }
-    
-    private func createWrappedReceiveHandler(originalHandler: AnyObject, task: URLSessionWebSocketTask?) -> AnyObject {
-        // Define the completion handler type that matches URLSessionWebSocketTask.receive
-        typealias WebSocketReceiveHandler = @convention(block) (AnyObject?, NSError?) -> Void
-        
-        let wrappedHandler: WebSocketReceiveHandler = { [weak self] (message, error) in
-            // Handle our monitoring first
-            if let self = self, self.isEnabled, let task = task {
-                if let error = error {
-                    Task { @MainActor in
-                        self.handleReceiveError(task: task, error: error)
-                    }
-                } else if let message = message,
-                          let swiftMessage = self.convertToSwiftMessage(from: message) {
-                    Task { @MainActor in
-                        self.handleReceivedMessage(task: task, message: swiftMessage)
-                    }
-                }
-            }
-            
-            // Call the original handler
-            if let originalBlock = originalHandler as? WebSocketReceiveHandler {
-                originalBlock(message, error)
-            }
-        }
-        
-        return wrappedHandler as AnyObject
     }
     
     // MARK: - Event Handlers
