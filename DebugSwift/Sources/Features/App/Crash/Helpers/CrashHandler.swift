@@ -254,7 +254,7 @@ public class CrashHandler: @unchecked Sendable {
             let trace = CrashModel(
                 type: .nsexception,
                 details: .builder(name: info),
-                traces: .builder(Thread.simpleCallStackSymbols(arr))
+                traces: .builder(arr)
             )
             CrashManager.shared.save(crash: trace)
         }
@@ -264,7 +264,7 @@ public class CrashHandler: @unchecked Sendable {
             let trace = CrashModel(
                 type: .signal,
                 details: .builder(name: info),
-                traces: .builder(Thread.simpleCallStackSymbols())
+                traces: .builder(Thread.callStackSymbols)
             )
             CrashManager.shared.save(crash: trace)
         }
